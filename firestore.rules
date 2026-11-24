@@ -1,0 +1,543 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email_verified == true && request.auth.token.email == 'businesskingscopia@gmail.com')
+      );
+    }
+
+    function isApprovedDeveloper() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/developers/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/developers/$(request.auth.uid)).data.status == 'approved';
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    function isOptionalString(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    // --- Validation Blueprints ---
+    function isValidAdmin(data) {
+      return data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+             isOptionalString(data, 'grantedBy', 128) &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+             isOptionalString(data, 'photoUrl', 1000) &&
+             data.role in ['user', 'developer', 'admin'] &&
+             data.status in ['active', 'suspended'] &&
+             data.notificationsEnabled is bool &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.lastLoginAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidDownloadRecord(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.appId is string && isValidId(data.appId) &&
+             data.versionId is string && isValidId(data.versionId) &&
+             data.appName is string && data.appName.size() >= 1 && data.appName.size() <= 120 &&
+             data.packageName is string && data.packageName.size() >= 3 && data.packageName.size() <= 200 &&
+             data.versionName is string && data.versionName.size() >= 1 && data.versionName.size() <= 60 &&
+             data.versionCode is int && data.versionCode >= 1 &&
+             data.status in ['waiting', 'downloading', 'paused', 'completed', 'failed', 'cancelled'] &&
+             data.bytesDownloaded is int && data.bytesDownloaded >= 0 &&
+             data.totalBytes is int && data.totalBytes >= 0 &&
+             data.apkUrl is string && data.apkUrl.size() <= 2000 &&
+             data.sha256 is string && data.sha256.size() <= 128 &&
+             isOptionalString(data, 'localFilePath', 1000) &&
+             isOptionalString(data, 'errorMessage', 500) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidFavoriteItem(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.appId is string && isValidId(data.appId) &&
+             data.listType in ['favorite', 'wishlist'] &&
+             data.appName is string && data.appName.size() >= 1 && data.appName.size() <= 120 &&
+             data.developerName is string && data.developerName.size() >= 1 && data.developerName.size() <= 120 &&
+             isOptionalString(data, 'iconUrl', 1000) &&
+             data.averageRating is number && data.averageRating >= 0 && data.averageRating <= 5 &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidNotification(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+             data.body is string && data.body.size() >= 1 && data.body.size() <= 1000 &&
+             data.type in ['app_approved', 'app_rejected', 'update_available', 'download_completed', 'account', 'submission'] &&
+             isOptionalString(data, 'targetAppId', 128) &&
+             data.read is bool &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidDeveloperProfile(data) {
+      return data.developerId is string && data.developerId.size() >= 1 && data.developerId.size() <= 128 &&
+             data.developerName is string && data.developerName.size() >= 2 && data.developerName.size() <= 120 &&
+             isOptionalString(data, 'bio', 1000) &&
+             data.contactEmail is string && data.contactEmail.size() >= 3 && data.contactEmail.size() <= 200 &&
+             isOptionalString(data, 'websiteUrl', 500) &&
+             data.status in ['pending', 'approved', 'suspended'] &&
+             data.totalDownloads is int && data.totalDownloads >= 0 &&
+             data.publishedAppsCount is int && data.publishedAppsCount >= 0 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidCategory(data) {
+      return data.name is string && data.name.size() >= 2 && data.name.size() <= 80 &&
+             data.slug is string && data.slug.size() >= 2 && data.slug.size() <= 80 &&
+             data.iconName is string && data.iconName.size() >= 1 && data.iconName.size() <= 80 &&
+             data.gameCategory is bool &&
+             data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 1000 &&
+             data.active is bool &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidApplication(data) {
+      return data.developerId is string && data.developerId.size() >= 1 && data.developerId.size() <= 128 &&
+             data.developerName is string && data.developerName.size() >= 2 && data.developerName.size() <= 120 &&
+             data.appName is string && data.appName.size() >= 2 && data.appName.size() <= 120 &&
+             data.packageName is string && data.packageName.size() >= 3 && data.packageName.size() <= 200 &&
+             data.categoryId is string && isValidId(data.categoryId) &&
+             data.categoryName is string && data.categoryName.size() >= 2 && data.categoryName.size() <= 80 &&
+             data.gameApp is bool &&
+             data.shortDescription is string && data.shortDescription.size() >= 4 && data.shortDescription.size() <= 240 &&
+             data.fullDescription is string && data.fullDescription.size() >= 10 && data.fullDescription.size() <= 6000 &&
+             isOptionalString(data, 'iconUrl', 2000) &&
+             (!('screenshotUrls' in data) || (data.screenshotUrls is list && data.screenshotUrls.size() <= 8 && (data.screenshotUrls.size() == 0 || data.screenshotUrls[0] is string))) &&
+             isOptionalString(data, 'latestVersionId', 128) &&
+             data.latestVersionName is string && data.latestVersionName.size() >= 1 && data.latestVersionName.size() <= 60 &&
+             data.latestVersionCode is int && data.latestVersionCode >= 1 &&
+             isOptionalString(data, 'apkUrl', 2000) &&
+             data.apkSizeBytes is int && data.apkSizeBytes >= 0 &&
+             data.apkSha256 is string && data.apkSha256.size() <= 128 &&
+             data.signingCertSha256 is string && data.signingCertSha256.size() <= 128 &&
+             isOptionalString(data, 'whatsNew', 2000) &&
+             (!('permissions' in data) || (data.permissions is list && data.permissions.size() <= 50 && (data.permissions.size() == 0 || data.permissions[0] is string))) &&
+             data.privacyPolicyUrl is string && data.privacyPolicyUrl.size() <= 1000 &&
+             data.contactEmail is string && data.contactEmail.size() >= 3 && data.contactEmail.size() <= 200 &&
+             data.status in ['draft', 'pending_review', 'approved', 'published', 'rejected', 'suspended'] &&
+             isOptionalString(data, 'rejectionReason', 1000) &&
+             data.featured is bool &&
+             data.editorsPick is bool &&
+             data.recommended is bool &&
+             data.averageRating is number && data.averageRating >= 0 && data.averageRating <= 5 &&
+             data.totalRatings is int && data.totalRatings >= 0 &&
+             data.downloadCount is int && data.downloadCount >= 0 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt) &&
+             (!('publishedAt' in data) || isValidTimestamp(data.publishedAt));
+    }
+
+    function isValidAppVersion(data) {
+      return data.appId is string && isValidId(data.appId) &&
+             data.developerId is string && data.developerId.size() >= 1 && data.developerId.size() <= 128 &&
+             data.packageName is string && data.packageName.size() >= 3 && data.packageName.size() <= 200 &&
+             data.versionName is string && data.versionName.size() >= 1 && data.versionName.size() <= 60 &&
+             data.versionCode is int && data.versionCode >= 1 &&
+             data.apkUrl is string && data.apkUrl.size() <= 2000 &&
+             data.apkSizeBytes is int && data.apkSizeBytes >= 0 &&
+             data.apkSha256 is string && data.apkSha256.size() <= 128 &&
+             data.signingCertSha256 is string && data.signingCertSha256.size() <= 128 &&
+             data.whatsNew is string && data.whatsNew.size() <= 2000 &&
+             (!('permissions' in data) || (data.permissions is list && data.permissions.size() <= 50 && (data.permissions.size() == 0 || data.permissions[0] is string))) &&
+             data.minSdkVersion is int && data.minSdkVersion >= 1 && data.minSdkVersion <= 99 &&
+             data.targetSdkVersion is int && data.targetSdkVersion >= 1 && data.targetSdkVersion <= 99 &&
+             data.securityScanStatus in ['pending', 'verified', 'flagged'] &&
+             data.status in ['pending_review', 'approved', 'published', 'rejected'] &&
+             isOptionalString(data, 'rejectionReason', 1000) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidReview(data) {
+      return data.appId is string && isValidId(data.appId) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120 &&
+             isOptionalString(data, 'userPhotoUrl', 1000) &&
+             data.rating is int && data.rating >= 1 && data.rating <= 5 &&
+             data.comment is string && data.comment.size() >= 1 && data.comment.size() <= 2000 &&
+             data.helpfulCount is int && data.helpfulCount >= 0 &&
+             data.status in ['approved', 'flagged', 'removed'] &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidReport(data) {
+      return data.reporterId is string && data.reporterId.size() >= 1 && data.reporterId.size() <= 128 &&
+             data.targetType in ['application', 'review'] &&
+             data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 256 &&
+             data.reason is string && data.reason.size() >= 3 && data.reason.size() <= 160 &&
+             data.details is string && data.details.size() >= 3 && data.details.size() <= 2000 &&
+             data.status in ['open', 'reviewed', 'resolved', 'dismissed'] &&
+             isOptionalString(data, 'resolutionNote', 1000) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidUploadSession(data) {
+      return data.developerId is string && data.developerId.size() >= 1 && data.developerId.size() <= 128 &&
+             isOptionalString(data, 'appId', 128) &&
+             data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 256 &&
+             data.packageName is string && data.packageName.size() >= 3 && data.packageName.size() <= 200 &&
+             data.versionName is string && data.versionName.size() >= 1 && data.versionName.size() <= 60 &&
+             data.versionCode is int && data.versionCode >= 1 &&
+             data.totalBytes is int && data.totalBytes >= 0 &&
+             data.uploadedBytes is int && data.uploadedBytes >= 0 &&
+             data.sha256 is string && data.sha256.size() <= 128 &&
+             data.signingCertSha256 is string && data.signingCertSha256.size() <= 128 &&
+             data.status in ['initiated', 'uploading', 'validating', 'completed', 'failed', 'cancelled'] &&
+             isOptionalString(data, 'errorMessage', 500) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidAdminSettings(data) {
+      return data.announcementTitle is string && data.announcementTitle.size() <= 160 &&
+             data.announcementBody is string && data.announcementBody.size() <= 1000 &&
+             data.announcementActive is bool &&
+             data.maxApkSizeMb is int && data.maxApkSizeMb >= 10 && data.maxApkSizeMb <= 2048 &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    // --- Collection Rules ---
+
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(adminUid) && isAdmin() &&
+                       incoming().uid == adminUid &&
+                       incoming().keys().hasAll(['uid', 'email', 'createdAt']) &&
+                       incoming().keys().hasOnly(['uid', 'email', 'grantedBy', 'createdAt']) &&
+                       isValidAdmin(incoming());
+      allow update: if false;
+      allow delete: if isValidId(adminUid) && isAdmin();
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) &&
+                       isOwner(userId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().role == 'user' &&
+                       incoming().status == 'active' &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'email', 'role', 'status', 'notificationsEnabled', 'createdAt', 'lastLoginAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'photoUrl', 'role', 'status', 'notificationsEnabled', 'createdAt', 'lastLoginAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+      allow update: if isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt && (
+                         isAdmin() ||
+                         (isOwner(userId) &&
+                          incoming().role == existing().role &&
+                          incoming().status == existing().status &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoUrl', 'notificationsEnabled', 'lastLoginAt', 'updatedAt']))
+                       );
+      allow delete: if isValidId(userId) && (isOwner(userId) || isAdmin());
+
+      match /downloads/{downloadId} {
+        allow get: if isValidId(downloadId) && isOwner(userId);
+        allow list: if isOwner(userId);
+        allow create: if isValidId(downloadId) &&
+                         isOwner(userId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'appId', 'versionId', 'appName', 'packageName', 'versionName', 'versionCode', 'status', 'bytesDownloaded', 'totalBytes', 'apkUrl', 'sha256', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'appId', 'versionId', 'appName', 'packageName', 'versionName', 'versionCode', 'status', 'bytesDownloaded', 'totalBytes', 'apkUrl', 'sha256', 'localFilePath', 'errorMessage', 'createdAt', 'updatedAt']) &&
+                         isValidDownloadRecord(incoming());
+        allow update: if isValidId(downloadId) &&
+                         isOwner(userId) &&
+                         isValidDownloadRecord(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().appId == existing().appId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['versionId', 'versionName', 'versionCode', 'status', 'bytesDownloaded', 'totalBytes', 'apkUrl', 'sha256', 'localFilePath', 'errorMessage', 'updatedAt']);
+        allow delete: if isValidId(downloadId) && isOwner(userId);
+      }
+
+      match /favorites/{appId} {
+        allow get: if isValidId(appId) && isOwner(userId);
+        allow list: if isOwner(userId);
+        allow create: if isValidId(appId) &&
+                         isOwner(userId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().appId == appId &&
+                         incoming().keys().hasAll(['userId', 'appId', 'listType', 'appName', 'developerName', 'averageRating', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'appId', 'listType', 'appName', 'developerName', 'iconUrl', 'averageRating', 'createdAt']) &&
+                         isValidFavoriteItem(incoming());
+        allow update: if isValidId(appId) &&
+                         isOwner(userId) &&
+                         isValidFavoriteItem(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().appId == existing().appId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['listType', 'appName', 'developerName', 'iconUrl', 'averageRating']);
+        allow delete: if isValidId(appId) && isOwner(userId);
+      }
+
+      match /notifications/{notificationId} {
+        allow get: if isValidId(notificationId) && (isOwner(userId) || isAdmin());
+        allow list: if isOwner(userId) || isAdmin();
+        allow create: if isValidId(notificationId) &&
+                         (isOwner(userId) || isAdmin()) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll(['userId', 'title', 'body', 'type', 'read', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'title', 'body', 'type', 'targetAppId', 'read', 'createdAt']) &&
+                         isValidNotification(incoming());
+        allow update: if isValidId(notificationId) &&
+                         isOwner(userId) &&
+                         isValidNotification(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+        allow delete: if isValidId(notificationId) && (isOwner(userId) || isAdmin());
+      }
+    }
+
+    match /developers/{developerId} {
+      allow get: if isValidId(developerId) && (isOwner(developerId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(developerId) &&
+                       isOwner(developerId) &&
+                       incoming().developerId == request.auth.uid &&
+                       incoming().status == 'pending' &&
+                       incoming().totalDownloads == 0 &&
+                       incoming().publishedAppsCount == 0 &&
+                       incoming().keys().hasAll(['developerId', 'developerName', 'contactEmail', 'status', 'totalDownloads', 'publishedAppsCount', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['developerId', 'developerName', 'bio', 'contactEmail', 'websiteUrl', 'status', 'totalDownloads', 'publishedAppsCount', 'createdAt', 'updatedAt']) &&
+                       isValidDeveloperProfile(incoming());
+      allow update: if isValidId(developerId) &&
+                       isValidDeveloperProfile(incoming()) &&
+                       incoming().developerId == existing().developerId &&
+                       incoming().createdAt == existing().createdAt && (
+                         isAdmin() ||
+                         (isOwner(developerId) &&
+                          incoming().status == existing().status &&
+                          incoming().totalDownloads == existing().totalDownloads &&
+                          incoming().publishedAppsCount == existing().publishedAppsCount &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['developerName', 'bio', 'contactEmail', 'websiteUrl', 'updatedAt']))
+                       );
+      allow delete: if isValidId(developerId) && isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId);
+      allow list: if true;
+      allow create: if isValidId(categoryId) && isAdmin() &&
+                       incoming().keys().hasAll(['name', 'slug', 'iconName', 'gameCategory', 'sortOrder', 'active', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['name', 'slug', 'iconName', 'gameCategory', 'sortOrder', 'active', 'createdAt', 'updatedAt']) &&
+                       isValidCategory(incoming());
+      allow update: if isValidId(categoryId) && isAdmin() &&
+                       isValidCategory(incoming()) &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'slug', 'iconName', 'gameCategory', 'sortOrder', 'active', 'updatedAt']);
+      allow delete: if isValidId(categoryId) && isAdmin();
+    }
+
+    match /applications/{appId} {
+      allow get: if isValidId(appId) && (
+        existing().status == 'published' ||
+        (isSignedIn() && (existing().developerId == request.auth.uid || isAdmin()))
+      );
+      allow list: if existing().status == 'published' ||
+                     (isSignedIn() && (existing().developerId == request.auth.uid || isAdmin()));
+      allow create: if isValidId(appId) &&
+                       isSignedIn() &&
+                       (isAdmin() || isApprovedDeveloper()) &&
+                       incoming().developerId == request.auth.uid &&
+                       incoming().status in ['draft', 'pending_review'] &&
+                       incoming().featured == false &&
+                       incoming().editorsPick == false &&
+                       incoming().recommended == false &&
+                       incoming().averageRating == 0 &&
+                       incoming().totalRatings == 0 &&
+                       incoming().downloadCount == 0 &&
+                       incoming().keys().hasAll(['developerId', 'developerName', 'appName', 'packageName', 'categoryId', 'categoryName', 'gameApp', 'shortDescription', 'fullDescription', 'latestVersionName', 'latestVersionCode', 'apkSizeBytes', 'apkSha256', 'signingCertSha256', 'privacyPolicyUrl', 'contactEmail', 'status', 'featured', 'editorsPick', 'recommended', 'averageRating', 'totalRatings', 'downloadCount', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['developerId', 'developerName', 'appName', 'packageName', 'categoryId', 'categoryName', 'gameApp', 'shortDescription', 'fullDescription', 'iconUrl', 'screenshotUrls', 'latestVersionId', 'latestVersionName', 'latestVersionCode', 'apkUrl', 'apkSizeBytes', 'apkSha256', 'signingCertSha256', 'whatsNew', 'permissions', 'privacyPolicyUrl', 'contactEmail', 'status', 'rejectionReason', 'featured', 'editorsPick', 'recommended', 'averageRating', 'totalRatings', 'downloadCount', 'createdAt', 'updatedAt', 'publishedAt']) &&
+                       isValidApplication(incoming());
+      allow update: if isValidId(appId) &&
+                       isSignedIn() &&
+                       isValidApplication(incoming()) &&
+                       incoming().developerId == existing().developerId &&
+                       incoming().packageName == existing().packageName &&
+                       incoming().createdAt == existing().createdAt && (
+                         isAdmin() ||
+                         // Developer owner edits or submits new pending review
+                         (existing().developerId == request.auth.uid &&
+                          (isAdmin() || isApprovedDeveloper()) &&
+                          existing().status != 'suspended' &&
+                          incoming().status in ['draft', 'pending_review'] &&
+                          incoming().featured == existing().featured &&
+                          incoming().editorsPick == existing().editorsPick &&
+                          incoming().recommended == existing().recommended &&
+                          incoming().averageRating == existing().averageRating &&
+                          incoming().totalRatings == existing().totalRatings &&
+                          incoming().downloadCount == existing().downloadCount &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['developerName', 'appName', 'categoryId', 'categoryName', 'gameApp', 'shortDescription', 'fullDescription', 'iconUrl', 'screenshotUrls', 'latestVersionId', 'latestVersionName', 'latestVersionCode', 'apkUrl', 'apkSizeBytes', 'apkSha256', 'signingCertSha256', 'whatsNew', 'permissions', 'privacyPolicyUrl', 'contactEmail', 'status', 'updatedAt'])) ||
+                         // Signed-in user atomic download count increment on published app
+                         (existing().status == 'published' &&
+                          incoming().downloadCount == existing().downloadCount + 1 &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['downloadCount', 'updatedAt'])) ||
+                         // Signed-in user atomic rating aggregate update paired with their review
+                         (existing().status == 'published' &&
+                          existsAfter(/databases/$(database)/documents/reviews/$(appId + '_' + request.auth.uid)) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['averageRating', 'totalRatings', 'updatedAt']))
+                       );
+      allow delete: if isValidId(appId) && (isAdmin() || (isSignedIn() && existing().developerId == request.auth.uid && existing().status == 'draft'));
+    }
+
+    match /app_versions/{versionId} {
+      allow get: if isValidId(versionId) && (
+        existing().status == 'published' ||
+        (isSignedIn() && (existing().developerId == request.auth.uid || isAdmin()))
+      );
+      allow list: if existing().status == 'published' ||
+                     (isSignedIn() && (existing().developerId == request.auth.uid || isAdmin()));
+      allow create: if isValidId(versionId) &&
+                       isSignedIn() &&
+                       (isAdmin() || isApprovedDeveloper()) &&
+                       incoming().developerId == request.auth.uid &&
+                       incoming().status == 'pending_review' &&
+                       incoming().securityScanStatus == 'pending' &&
+                       exists(/databases/$(database)/documents/applications/$(incoming().appId)) &&
+                       get(/databases/$(database)/documents/applications/$(incoming().appId)).data.developerId == request.auth.uid &&
+                       incoming().keys().hasAll(['appId', 'developerId', 'packageName', 'versionName', 'versionCode', 'apkUrl', 'apkSizeBytes', 'apkSha256', 'signingCertSha256', 'whatsNew', 'minSdkVersion', 'targetSdkVersion', 'securityScanStatus', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['appId', 'developerId', 'packageName', 'versionName', 'versionCode', 'apkUrl', 'apkSizeBytes', 'apkSha256', 'signingCertSha256', 'whatsNew', 'permissions', 'minSdkVersion', 'targetSdkVersion', 'securityScanStatus', 'status', 'rejectionReason', 'createdAt', 'updatedAt']) &&
+                       isValidAppVersion(incoming());
+      allow update: if isValidId(versionId) && isAdmin() &&
+                       isValidAppVersion(incoming()) &&
+                       incoming().appId == existing().appId &&
+                       incoming().developerId == existing().developerId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'securityScanStatus', 'rejectionReason', 'updatedAt']);
+      allow delete: if isValidId(versionId) && isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow get: if isValidId(reviewId) && (
+        existing().status == 'approved' ||
+        (isSignedIn() && (existing().userId == request.auth.uid || isAdmin()))
+      );
+      allow list: if existing().status == 'approved' ||
+                     (isSignedIn() && (existing().userId == request.auth.uid || isAdmin()));
+      allow create: if isValidId(reviewId) &&
+                       isSignedIn() &&
+                       reviewId == incoming().appId + '_' + request.auth.uid &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().status == 'approved' &&
+                       incoming().helpfulCount == 0 &&
+                       exists(/databases/$(database)/documents/applications/$(incoming().appId)) &&
+                       incoming().keys().hasAll(['appId', 'userId', 'userName', 'rating', 'comment', 'helpfulCount', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['appId', 'userId', 'userName', 'userPhotoUrl', 'rating', 'comment', 'helpfulCount', 'status', 'createdAt', 'updatedAt']) &&
+                       isValidReview(incoming());
+      allow update: if isValidId(reviewId) &&
+                       isSignedIn() &&
+                       isValidReview(incoming()) &&
+                       incoming().appId == existing().appId &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt && (
+                         isAdmin() ||
+                         (existing().userId == request.auth.uid &&
+                          incoming().status == existing().status &&
+                          incoming().helpfulCount == existing().helpfulCount &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'userPhotoUrl', 'rating', 'comment', 'updatedAt'])) ||
+                         (existing().status == 'approved' &&
+                          incoming().helpfulCount == existing().helpfulCount + 1 &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['helpfulCount', 'updatedAt']))
+                       );
+      allow delete: if isValidId(reviewId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /reports/{reportId} {
+      allow get: if isValidId(reportId) && isSignedIn() && (existing().reporterId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().reporterId == request.auth.uid || isAdmin());
+      allow create: if isValidId(reportId) &&
+                       isSignedIn() &&
+                       incoming().reporterId == request.auth.uid &&
+                       incoming().status == 'open' &&
+                       incoming().keys().hasAll(['reporterId', 'targetType', 'targetId', 'reason', 'details', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['reporterId', 'targetType', 'targetId', 'reason', 'details', 'status', 'resolutionNote', 'createdAt', 'updatedAt']) &&
+                       isValidReport(incoming());
+      allow update: if isValidId(reportId) && isAdmin() &&
+                       isValidReport(incoming()) &&
+                       incoming().reporterId == existing().reporterId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'resolutionNote', 'updatedAt']);
+      allow delete: if isValidId(reportId) && isAdmin();
+    }
+
+    match /upload_sessions/{sessionId} {
+      allow get: if isValidId(sessionId) && isSignedIn() && (existing().developerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().developerId == request.auth.uid || isAdmin());
+      allow create: if isValidId(sessionId) &&
+                       isSignedIn() &&
+                       (isAdmin() || isApprovedDeveloper()) &&
+                       incoming().developerId == request.auth.uid &&
+                       incoming().status == 'initiated' &&
+                       incoming().keys().hasAll(['developerId', 'fileName', 'packageName', 'versionName', 'versionCode', 'totalBytes', 'uploadedBytes', 'sha256', 'signingCertSha256', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['developerId', 'appId', 'fileName', 'packageName', 'versionName', 'versionCode', 'totalBytes', 'uploadedBytes', 'sha256', 'signingCertSha256', 'status', 'errorMessage', 'createdAt', 'updatedAt']) &&
+                       isValidUploadSession(incoming());
+      allow update: if isValidId(sessionId) &&
+                       isSignedIn() &&
+                       isValidUploadSession(incoming()) &&
+                       incoming().developerId == existing().developerId &&
+                       incoming().createdAt == existing().createdAt && (
+                         isAdmin() ||
+                         (existing().developerId == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['appId', 'uploadedBytes', 'status', 'errorMessage', 'updatedAt']))
+                       );
+      allow delete: if isValidId(sessionId) && isSignedIn() && (existing().developerId == request.auth.uid || isAdmin());
+    }
+
+    match /admin_settings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if true;
+      allow create, update: if isValidId(settingId) && isAdmin() &&
+                               incoming().keys().hasAll(['announcementTitle', 'announcementBody', 'announcementActive', 'maxApkSizeMb', 'updatedAt']) &&
+                               incoming().keys().hasOnly(['announcementTitle', 'announcementBody', 'announcementActive', 'maxApkSizeMb', 'updatedAt']) &&
+                               isValidAdminSettings(incoming());
+      allow delete: if isValidId(settingId) && isAdmin();
+    }
+  }
+}

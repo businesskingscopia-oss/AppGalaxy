@@ -1,0 +1,6 @@
+{
+  "name": "AppGalaxy",
+  "description": "Explore. Download. Discover. Android application marketplace with Google Sign-In, app discovery, developer publishing, download management, and admin moderation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

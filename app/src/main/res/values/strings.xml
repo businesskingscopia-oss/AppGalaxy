@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">AppGalaxy</string>
+    <string name="app_tagline">Explore. Download. Discover.</string>
+    <string name="nav_games">Games</string>
+    <string name="nav_apps">Apps</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_downloads">Downloads</string>
+    <string name="nav_profile">Profile</string>
+    <string name="sign_in_google">Sign in with Google</string>
+    <string name="sign_out">Sign out</string>
+    <string name="search_hint">Search apps, games, developers…</string>
+    <string name="action_install">Install</string>
+    <string name="action_download">Download</string>
+    <string name="action_update">Update</string>
+    <string name="action_open">Open</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_retry">Retry</string>
+    <string name="developer_portal">Developer Portal</string>
+    <string name="admin_dashboard">Admin Dashboard</string>
+    <string name="legal_policies">Legal &amp; Policies</string>
+</resources>
